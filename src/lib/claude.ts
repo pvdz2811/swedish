@@ -8,26 +8,31 @@ import type { StoredMessage } from './db'
  * app: a single trusted user running a personal tool with their own key. If this
  * ever grows a second user, the call belongs behind a server instead.
  */
+/**
+ * Ordered cheapest first, because this app runs on a small prepaid balance and
+ * the default should be the one that lasts. Costs assume a typical turn here of
+ * roughly 1,200 input and 150 output tokens.
+ */
 export const MODELS = [
   {
-    id: 'claude-opus-5',
-    label: 'Opus 5',
-    hint: 'Best Swedish and the sharpest corrections. Roughly 1–2 cents per exchange.',
+    id: 'claude-haiku-4-5',
+    label: 'Haiku 4.5 — goes furthest',
+    hint: 'Fastest, and about 2,500 exchanges per $5. Simpler Swedish and blunter corrections, which is fine at beginner level.',
   },
   {
     id: 'claude-sonnet-5',
-    label: 'Sonnet 5',
-    hint: 'Clearly cheaper, still very good for everyday conversation.',
+    label: 'Sonnet 5 — balanced',
+    hint: 'Noticeably more natural Swedish. About 1,300 exchanges per $5.',
   },
   {
-    id: 'claude-haiku-4-5',
-    label: 'Haiku 4.5',
-    hint: 'Cheapest and fastest. Simpler Swedish, blunter corrections.',
+    id: 'claude-opus-5',
+    label: 'Opus 5 — best Swedish',
+    hint: 'The most natural replies and the sharpest corrections. About 500 exchanges per $5.',
   },
 ] as const
 
 export type ModelId = (typeof MODELS)[number]['id']
-export const DEFAULT_MODEL: ModelId = 'claude-opus-5'
+export const DEFAULT_MODEL: ModelId = 'claude-haiku-4-5'
 
 /**
  * Server-side refusal fallback. A Swedish tutor will essentially never trip a
