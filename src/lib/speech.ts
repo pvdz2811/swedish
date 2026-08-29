@@ -294,10 +294,11 @@ export function primeSpeechOnFirstGesture(): void {
     if (primed) return
     primed = true
     try {
-      // A silent utterance is enough to satisfy the gesture requirement.
-      const warmup = new SpeechSynthesisUtterance(' ')
-      warmup.volume = 0
-      warmup.lang = 'sv-SE'
+      // Real text at full volume: some Android engines reject a whitespace-only
+      // utterance or one at volume 0, and a rejected prime wedges the queue.
+      // "Hej" is short enough to be unobtrusive if it does play.
+      const warmup = new SpeechSynthesisUtterance('hej')
+      warmup.volume = 0.01
       speechSynthesis.speak(warmup)
     } catch {
       /* nothing useful to do — the real speak() will report any failure */
@@ -316,7 +317,11 @@ export function speak(text: string, options: SpeakOptions = {}): void {
   }
 
   const wasBusy = speechSynthesis.speaking || speechSynthesis.pending
-  stop()
+  // Only cancel when there is genuinely something to cancel. Calling cancel()
+  // on an idle Android engine can leave it wedged so nothing speaks again.
+  if (wasBusy) stop()
+  // A stray pause() with no matching resume() also wedges it, silently.
+  if (speechSynthesis.paused) speechSynthesis.resume()
 
   const voice = pickVoice(options.voiceURI ?? '')
 
@@ -399,41 +404,110 @@ export interface SpeechReport {
   winner: string | null
 }
 
-/** Tries one strategy and resolves with what happened. Never rejects. */
-function probe(strategy: SpeechStrategy, rate: number, voiceURI: string): Promise<string> {
+/** One thing to try. `strategy` is null for probes that are not about Swedish. */
+interface Probe {
+  id: string
+  label: string
+  /** What to do to the engine before speaking. */
+  pre: 'nothing' | 'resume' | 'cancel' | 'cancel-wait'
+  text: string
+  strategy: SpeechStrategy | null
+  /** Overrides applied when `strategy` is null. */
+  lang?: string
+  volume?: number
+}
+
+/** Which strategy id this probe proves, if it succeeds. */
+const PROBES: Probe[] = [
+  // Is synthesis capable of anything at all right now, in any language?
+  { id: 'bare', label: 'Plain English, nothing set', pre: 'nothing', text: 'hello', strategy: null },
+  { id: 'bare', label: 'Plain English after resume()', pre: 'resume', text: 'hello', strategy: null },
+  { id: 'bare', label: 'Plain English after cancel()', pre: 'cancel', text: 'hello', strategy: null },
+  {
+    id: 'bare',
+    label: 'Plain English after cancel() + pause',
+    pre: 'cancel-wait',
+    text: 'hello',
+    strategy: null,
+  },
+  { id: 'bare', label: 'English at low volume', pre: 'nothing', text: 'hello', strategy: null, volume: 0.05 },
+  // Android reports its voice as sv_SE; the web standard uses sv-SE.
+  { id: 'lang', label: 'Swedish tagged sv-SE', pre: 'nothing', text: 'hej', strategy: null, lang: 'sv-SE' },
+  { id: 'lang', label: 'Swedish tagged sv_SE (Android style)', pre: 'nothing', text: 'hej', strategy: null, lang: 'sv_SE' },
+  // The original five.
+  ...STRATEGIES.map((s) => ({
+    id: s.id,
+    label: s.label,
+    pre: 'nothing' as const,
+    text: 'hej hej',
+    strategy: s,
+  })),
+]
+
+interface ProbeOutcome {
+  outcome: string
+  state: string
+}
+
+/** Tries one probe and resolves with what happened. Never rejects. */
+function runProbe(probe: Probe, rate: number, voiceURI: string): Promise<ProbeOutcome> {
   return new Promise((resolve) => {
-    let settled = false
-    const finish = (outcome: string) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      try {
-        speechSynthesis.cancel()
-      } catch {
-        /* ignore */
+    const state = `speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused}`
+
+    const go = () => {
+      let settled = false
+      const finish = (outcome: string) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        resolve({ outcome, state })
       }
-      resolve(outcome)
+
+      let utterance: SpeechSynthesisUtterance
+      if (probe.strategy) {
+        utterance = buildUtterance(probe.text, probe.strategy, rate, voiceURI)
+      } else {
+        utterance = new SpeechSynthesisUtterance(probe.text)
+        if (probe.lang) utterance.lang = probe.lang
+      }
+      if (probe.volume !== undefined) utterance.volume = probe.volume
+
+      utterance.onstart = () => finish('SPOKE')
+      utterance.onerror = (event) => finish(event.error || 'error')
+      utterance.onend = () => finish('ended without starting')
+
+      const timer = setTimeout(() => finish('timed out, silent'), 5000)
+
+      try {
+        speechSynthesis.speak(utterance)
+      } catch (err) {
+        finish(err instanceof Error ? err.message : 'threw')
+      }
     }
 
-    const utterance = buildUtterance('Hej hej', strategy, rate, voiceURI)
-    // onstart firing means the engine really produced audio for this shape.
-    utterance.onstart = () => finish('spoke')
-    utterance.onerror = (event) => finish(event.error || 'error')
-    utterance.onend = () => finish('ended without starting')
-
-    const timer = setTimeout(() => finish('timed out — silent'), 5000)
-
-    try {
-      speechSynthesis.speak(utterance)
-    } catch (err) {
-      finish(err instanceof Error ? err.message : 'threw')
+    switch (probe.pre) {
+      case 'resume':
+        speechSynthesis.resume()
+        go()
+        break
+      case 'cancel':
+        speechSynthesis.cancel()
+        go()
+        break
+      case 'cancel-wait':
+        speechSynthesis.cancel()
+        setTimeout(go, 400)
+        break
+      default:
+        go()
     }
   })
 }
 
 /**
- * Runs every strategy in turn so a device that refuses one shape of utterance
- * can tell us which shape it does accept.
+ * Works through every probe so a device that refuses one shape of utterance can
+ * tell us which shape it does accept — or prove that synthesis is dead in this
+ * context entirely, which is itself the answer.
  */
 export async function diagnoseSpeech(rate: number, voiceURI: string): Promise<SpeechReport> {
   const voices = await loadVoices()
@@ -452,14 +526,29 @@ export async function diagnoseSpeech(rate: number, voiceURI: string): Promise<Sp
 
   if (!SPEECH_OUTPUT_SUPPORTED) return report
 
-  for (const strategy of STRATEGIES) {
-    const outcome = await probe(strategy, rate, voiceURI)
-    const ok = outcome === 'spoke'
-    report.results.push({ id: strategy.id, label: strategy.label, outcome, ok })
-    if (ok && !report.winner) report.winner = strategy.id
-    // Let the engine settle between attempts.
-    await new Promise((r) => setTimeout(r, 400))
+  for (const probe of PROBES) {
+    const { outcome, state } = await runProbe(probe, rate, voiceURI)
+    const ok = outcome === 'SPOKE'
+    report.results.push({
+      id: probe.id,
+      label: probe.label,
+      outcome: `${outcome}   (${state})`,
+      ok,
+    })
+    // Only adopt a strategy that actually speaks Swedish properly.
+    if (ok && !report.winner && probe.id !== 'bare') report.winner = probe.id
+    try {
+      speechSynthesis.cancel()
+    } catch {
+      /* ignore */
+    }
+    await new Promise((r) => setTimeout(r, 500))
   }
 
   return report
+}
+
+/** True if the engine produced audio for anything at all during the probe run. */
+export function anythingSpoke(report: SpeechReport): boolean {
+  return report.results.some((r) => r.ok)
 }

@@ -9,6 +9,7 @@ import {
   type ModelId,
 } from '../lib/claude'
 import {
+  anythingSpoke,
   diagnoseSpeech,
   loadVoices,
   speak,
@@ -431,9 +432,11 @@ function SpeechDiagnostics({ report }: { report: SpeechReport }) {
       >
         {report.winner
           ? 'Found a method that works — the app has switched to it. Try Play a sample above.'
-          : report.swedishVoices.length === 0
-            ? 'No Swedish voice is visible to the browser at all, even though one may be installed in Android. Try restarting the phone, then reopen the app.'
-            : 'None of the five methods produced audio. Copy the details below and send them to me.'}
+          : anythingSpoke(report)
+            ? 'The engine works, but not for Swedish. Copy the details below and send them to me.'
+            : report.standalone
+              ? 'Nothing spoke at all, not even plain English. Since this is running as an installed app, try the same page in a normal Chrome tab — if it speaks there, the installed-app mode is the culprit and I can work around it.'
+              : 'Nothing spoke at all, not even plain English. Check the media volume and that the phone is not in silent mode, then copy the details below and send them to me.'}
       </div>
 
       <pre
