@@ -6,7 +6,7 @@ import Talk from './screens/Talk'
 import SettingsScreen from './screens/Settings'
 import { allCards, ensureCards } from './lib/db'
 import { dueCount } from './lib/queue'
-import { loadVoices } from './lib/speech'
+import { loadVoices, primeSpeechOnFirstGesture } from './lib/speech'
 import { useSettings } from './lib/useSettings'
 
 export type Tab = 'home' | 'cards' | 'grammar' | 'talk' | 'settings'
@@ -35,6 +35,8 @@ export default function App() {
       await ensureCards()
       // Warm the voice list early — the first getVoices() call is usually empty.
       void loadVoices()
+      // Unlock Android's speech engine on the very first tap, wherever it lands.
+      primeSpeechOnFirstGesture()
       if (live) setSeeded(true)
     })()
     return () => {

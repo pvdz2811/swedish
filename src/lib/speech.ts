@@ -226,44 +226,92 @@ export interface SpeakOptions {
   onError?: (message: string) => void
 }
 
+/**
+ * Android Chrome will not synthesise anything until `speak()` has run once
+ * inside a real user gesture. Every line this app speaks arrives from an async
+ * callback — a resolved voice list, or an API reply — so none of them qualify.
+ * Priming once on the first touch unlocks the engine for the rest of the visit.
+ */
+let primed = false
+
+const GESTURES = ['pointerdown', 'touchend', 'keydown'] as const
+
+export function primeSpeechOnFirstGesture(): void {
+  if (!SPEECH_OUTPUT_SUPPORTED || primed) return
+
+  const prime = () => {
+    if (primed) return
+    primed = true
+    try {
+      // A silent utterance is enough to satisfy the gesture requirement.
+      const warmup = new SpeechSynthesisUtterance(' ')
+      warmup.volume = 0
+      warmup.lang = 'sv-SE'
+      speechSynthesis.speak(warmup)
+    } catch {
+      /* nothing useful to do — the real speak() will report any failure */
+    }
+    for (const type of GESTURES) document.removeEventListener(type, prime)
+  }
+
+  for (const type of GESTURES) document.addEventListener(type, prime, { passive: true })
+}
+
 /** Speaks Swedish text. Cancels anything already being spoken. */
 export function speak(text: string, options: SpeakOptions = {}): void {
   if (!SPEECH_OUTPUT_SUPPORTED || !text.trim()) {
     options.onEnd?.()
     return
   }
+
+  const wasBusy = speechSynthesis.speaking || speechSynthesis.pending
   stop()
 
-  const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = 'sv-SE'
-  utterance.rate = options.rate ?? 0.85
-  utterance.pitch = 1
-
   const voice = pickVoice(options.voiceURI ?? '')
-  if (voice) utterance.voice = voice
 
-  utterance.onstart = () => {
-    startKeepAlive()
-    options.onStart?.()
-  }
-  utterance.onend = () => {
-    stopKeepAlive()
-    options.onEnd?.()
-  }
-  utterance.onerror = (event) => {
-    stopKeepAlive()
-    // 'interrupted' and 'canceled' are what we cause ourselves via stop().
-    if (event.error !== 'interrupted' && event.error !== 'canceled') {
+  const attempt = (retriesLeft: number) => {
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'sv-SE'
+    utterance.rate = options.rate ?? 0.85
+    utterance.pitch = 1
+    if (voice) utterance.voice = voice
+
+    utterance.onstart = () => {
+      startKeepAlive()
+      options.onStart?.()
+    }
+    utterance.onend = () => {
+      stopKeepAlive()
+      options.onEnd?.()
+    }
+    utterance.onerror = (event) => {
+      stopKeepAlive()
+      // 'interrupted' and 'canceled' are what we cause ourselves via stop().
+      if (event.error === 'interrupted' || event.error === 'canceled') {
+        options.onEnd?.()
+        return
+      }
+      // Android's engine often fails the first utterance after being idle or
+      // cancelled, then works on a second attempt a moment later.
+      if (event.error === 'synthesis-failed' && retriesLeft > 0) {
+        setTimeout(() => attempt(retriesLeft - 1), 250)
+        return
+      }
       options.onError?.(
         voice
-          ? `Could not speak (${event.error}).`
+          ? `Could not speak (${event.error}). Tap Play to try again.`
           : 'No Swedish voice is installed. On Android: Settings → Accessibility → Text-to-speech → install Swedish.',
       )
+      options.onEnd?.()
     }
-    options.onEnd?.()
+
+    speechSynthesis.speak(utterance)
   }
 
-  speechSynthesis.speak(utterance)
+  // cancel() followed by speak() in the same tick drops the utterance on
+  // Android, so give the engine a moment to actually stop first.
+  if (wasBusy) setTimeout(() => attempt(1), 150)
+  else attempt(1)
 }
 
 export function stop(): void {
