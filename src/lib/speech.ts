@@ -218,6 +218,57 @@ function stopKeepAlive() {
   }
 }
 
+/**
+ * Android TTS engines disagree about which combination of utterance fields
+ * they will accept. Setting `voice` to an object from a stale `getVoices()`
+ * list, or a non-default `rate`, is enough to make some of them fail outright
+ * with `synthesis-failed` while a plainer utterance works fine.
+ *
+ * Rather than guess, the app can try each of these and keep whichever speaks.
+ */
+export interface SpeechStrategy {
+  id: string
+  label: string
+  /** Pin utterance.voice to a specific Swedish voice object. */
+  useVoice: boolean
+  /** Tag the utterance as sv-SE. */
+  setLang: boolean
+  /** Apply the user's slowed speaking rate. */
+  applyRate: boolean
+}
+
+export const STRATEGIES: SpeechStrategy[] = [
+  { id: 'voice-rate', label: 'Swedish voice, slowed', useVoice: true, setLang: true, applyRate: true },
+  { id: 'voice', label: 'Swedish voice, normal speed', useVoice: true, setLang: true, applyRate: false },
+  { id: 'lang-rate', label: 'Language tag only, slowed', useVoice: false, setLang: true, applyRate: true },
+  { id: 'lang', label: 'Language tag only, normal speed', useVoice: false, setLang: true, applyRate: false },
+  { id: 'bare', label: 'No voice or language set', useVoice: false, setLang: false, applyRate: false },
+]
+
+export const DEFAULT_STRATEGY = STRATEGIES[0].id
+
+let activeStrategy: SpeechStrategy = STRATEGIES[0]
+
+export function setSpeechStrategy(id: string): void {
+  activeStrategy = STRATEGIES.find((s) => s.id === id) ?? STRATEGIES[0]
+}
+
+function buildUtterance(
+  text: string,
+  strategy: SpeechStrategy,
+  rate: number,
+  voiceURI: string,
+): SpeechSynthesisUtterance {
+  const utterance = new SpeechSynthesisUtterance(text)
+  if (strategy.setLang) utterance.lang = 'sv-SE'
+  if (strategy.applyRate) utterance.rate = rate
+  if (strategy.useVoice) {
+    const voice = pickVoice(voiceURI)
+    if (voice) utterance.voice = voice
+  }
+  return utterance
+}
+
 export interface SpeakOptions {
   rate?: number
   voiceURI?: string
@@ -270,11 +321,12 @@ export function speak(text: string, options: SpeakOptions = {}): void {
   const voice = pickVoice(options.voiceURI ?? '')
 
   const attempt = (retriesLeft: number) => {
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'sv-SE'
-    utterance.rate = options.rate ?? 0.85
-    utterance.pitch = 1
-    if (voice) utterance.voice = voice
+    const utterance = buildUtterance(
+      text,
+      activeStrategy,
+      options.rate ?? 0.85,
+      options.voiceURI ?? '',
+    )
 
     utterance.onstart = () => {
       startKeepAlive()
@@ -323,4 +375,91 @@ export function stop(): void {
 /** True when a Swedish voice is actually available to speak with. */
 export function hasSwedishVoice(): boolean {
   return swedishVoices().length > 0
+}
+
+// ------------------------------------------------------------- diagnostics
+
+export interface StrategyOutcome {
+  id: string
+  label: string
+  /** 'spoke' means audio actually started. Anything else is the failure reason. */
+  outcome: string
+  ok: boolean
+}
+
+export interface SpeechReport {
+  supported: boolean
+  totalVoices: number
+  swedishVoices: string[]
+  /** Chrome only exposes speechSynthesis reliably in some display modes. */
+  standalone: boolean
+  userAgent: string
+  results: StrategyOutcome[]
+  /** First strategy that produced audio, if any. */
+  winner: string | null
+}
+
+/** Tries one strategy and resolves with what happened. Never rejects. */
+function probe(strategy: SpeechStrategy, rate: number, voiceURI: string): Promise<string> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (outcome: string) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try {
+        speechSynthesis.cancel()
+      } catch {
+        /* ignore */
+      }
+      resolve(outcome)
+    }
+
+    const utterance = buildUtterance('Hej hej', strategy, rate, voiceURI)
+    // onstart firing means the engine really produced audio for this shape.
+    utterance.onstart = () => finish('spoke')
+    utterance.onerror = (event) => finish(event.error || 'error')
+    utterance.onend = () => finish('ended without starting')
+
+    const timer = setTimeout(() => finish('timed out — silent'), 5000)
+
+    try {
+      speechSynthesis.speak(utterance)
+    } catch (err) {
+      finish(err instanceof Error ? err.message : 'threw')
+    }
+  })
+}
+
+/**
+ * Runs every strategy in turn so a device that refuses one shape of utterance
+ * can tell us which shape it does accept.
+ */
+export async function diagnoseSpeech(rate: number, voiceURI: string): Promise<SpeechReport> {
+  const voices = await loadVoices()
+  const report: SpeechReport = {
+    supported: SPEECH_OUTPUT_SUPPORTED,
+    totalVoices: voices.length,
+    swedishVoices: swedishVoices(voices).map(
+      (v) => `${v.name} [${v.lang}]${v.localService ? ' on-device' : ' network'}`,
+    ),
+    standalone:
+      typeof matchMedia === 'function' && matchMedia('(display-mode: standalone)').matches,
+    userAgent: navigator.userAgent,
+    results: [],
+    winner: null,
+  }
+
+  if (!SPEECH_OUTPUT_SUPPORTED) return report
+
+  for (const strategy of STRATEGIES) {
+    const outcome = await probe(strategy, rate, voiceURI)
+    const ok = outcome === 'spoke'
+    report.results.push({ id: strategy.id, label: strategy.label, outcome, ok })
+    if (ok && !report.winner) report.winner = strategy.id
+    // Let the engine settle between attempts.
+    await new Promise((r) => setTimeout(r, 400))
+  }
+
+  return report
 }

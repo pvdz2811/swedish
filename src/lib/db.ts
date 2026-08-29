@@ -43,6 +43,11 @@ export interface Settings {
   voiceURI: string
   /** Playback rate for spoken Swedish. Beginners usually want this below 1. */
   speechRate: number
+  /**
+   * Which shape of utterance this device's TTS engine accepts. Android engines
+   * vary; Settings can probe them and store whichever one actually speaks.
+   */
+  speechStrategy: string
   /** Speak the tutor's replies aloud automatically. */
   autoSpeak: boolean
   /** Show the English gloss under the tutor's Swedish without tapping. */
@@ -60,6 +65,7 @@ export const DEFAULT_SETTINGS: Settings = {
   workspaceId: '',
   voiceURI: '',
   speechRate: 0.85,
+  speechStrategy: 'voice-rate',
   autoSpeak: true,
   showTranslations: true,
   corrections: true,

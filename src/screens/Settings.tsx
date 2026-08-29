@@ -9,11 +9,13 @@ import {
   type ModelId,
 } from '../lib/claude'
 import {
+  diagnoseSpeech,
   loadVoices,
   speak,
   swedishVoices,
   SPEECH_INPUT_SUPPORTED,
   SPEECH_OUTPUT_SUPPORTED,
+  type SpeechReport,
 } from '../lib/speech'
 import { eraseEverything, resetAllCards } from '../lib/db'
 import { VOCABULARY } from '../data/vocabulary'
@@ -27,6 +29,8 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [confirmWipe, setConfirmWipe] = useState(false)
+  const [diagnosing, setDiagnosing] = useState(false)
+  const [report, setReport] = useState<SpeechReport | null>(null)
   // Shown on demand, or automatically once the API says it is required.
   const [showWorkspace, setShowWorkspace] = useState(Boolean(settings.workspaceId))
 
@@ -267,6 +271,34 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
             onChange={(v) => update({ autoSpeak: v })}
           />
 
+          <button
+            className="btn wide"
+            style={{ marginTop: 12 }}
+            disabled={!SPEECH_OUTPUT_SUPPORTED || diagnosing}
+            onClick={async () => {
+              setDiagnosing(true)
+              setReport(null)
+              try {
+                const result = await diagnoseSpeech(settings.speechRate, settings.voiceURI)
+                setReport(result)
+                // Adopt whatever this device actually accepts.
+                if (result.winner && result.winner !== settings.speechStrategy) {
+                  update({ speechStrategy: result.winner })
+                }
+              } finally {
+                setDiagnosing(false)
+              }
+            }}
+          >
+            {diagnosing ? 'Testing each method…' : '🩺 Diagnose speech problems'}
+          </button>
+          <div className="hint">
+            Plays a short phrase five different ways and keeps whichever one your phone accepts.
+            Takes about half a minute — turn the volume up.
+          </div>
+
+          {report && <SpeechDiagnostics report={report} />}
+
           {!SPEECH_INPUT_SUPPORTED && (
             <div className="notice warn" style={{ marginTop: 12 }}>
               Speech recognition is unavailable here, so the microphone is disabled. Chrome on
@@ -370,6 +402,64 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
         </p>
       </main>
     </>
+  )
+}
+
+function SpeechDiagnostics({ report }: { report: SpeechReport }) {
+  const summary = [
+    `supported: ${report.supported}`,
+    `voices: ${report.totalVoices} (${report.swedishVoices.length} Swedish)`,
+    ...report.swedishVoices.map((v) => `  · ${v}`),
+    `installed as app: ${report.standalone}`,
+    '',
+    ...report.results.map((r) => `${r.ok ? 'WORKS' : 'fails'}  ${r.label} — ${r.outcome}`),
+    '',
+    report.winner ? `now using: ${report.winner}` : 'nothing worked',
+    '',
+    report.userAgent,
+  ].join('\n')
+
+  return (
+    <div style={{ marginTop: 14 }}>
+      <div
+        className={`notice ${report.winner ? 'warn' : 'error'}`}
+        style={
+          report.winner
+            ? { background: 'var(--good-soft)', borderColor: 'var(--good)' }
+            : undefined
+        }
+      >
+        {report.winner
+          ? 'Found a method that works — the app has switched to it. Try Play a sample above.'
+          : report.swedishVoices.length === 0
+            ? 'No Swedish voice is visible to the browser at all, even though one may be installed in Android. Try restarting the phone, then reopen the app.'
+            : 'None of the five methods produced audio. Copy the details below and send them to me.'}
+      </div>
+
+      <pre
+        style={{
+          marginTop: 10,
+          padding: 12,
+          background: 'var(--surface-2)',
+          borderRadius: 'var(--radius-sm)',
+          fontSize: 11.5,
+          lineHeight: 1.5,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          overflowX: 'auto',
+        }}
+      >
+        {summary}
+      </pre>
+
+      <button
+        className="btn wide"
+        style={{ marginTop: 8 }}
+        onClick={() => void navigator.clipboard?.writeText(summary)}
+      >
+        Copy details
+      </button>
+    </div>
   )
 }
 

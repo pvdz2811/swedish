@@ -9,6 +9,7 @@ import {
 } from 'react'
 import { DEFAULT_SETTINGS, loadSettings, saveSettings, type Settings } from './db'
 import { DEFAULT_MODEL, type ModelId } from './claude'
+import { setSpeechStrategy } from './speech'
 
 /** Model choice lives alongside the other settings but is typed separately. */
 export interface AppSettings extends Settings {
@@ -34,7 +35,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     let live = true
     loadSettings().then((stored) => {
       if (!live) return
-      setSettings({ ...DEFAULTS, ...(stored as Partial<AppSettings>) })
+      const merged = { ...DEFAULTS, ...(stored as Partial<AppSettings>) }
+      // speech.ts holds this in module state so every speak() picks it up
+      // without threading it through each call site.
+      setSpeechStrategy(merged.speechStrategy)
+      setSettings(merged)
       setReady(true)
     })
     return () => {
@@ -45,6 +50,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const update = useCallback((patch: Partial<AppSettings>) => {
     setSettings((prev) => {
       const next = { ...prev, ...patch }
+      if (patch.speechStrategy) setSpeechStrategy(patch.speechStrategy)
       // Persist in the background; the UI has already moved on.
       void saveSettings(next)
       return next
