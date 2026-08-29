@@ -299,7 +299,7 @@ function AskPanel({ onBack }: { onBack: () => void }) {
     abort.current = new AbortController()
     try {
       const reply = await askGrammar(
-        settings.apiKey,
+        { apiKey: settings.apiKey, workspaceId: settings.workspaceId },
         settings.model,
         trimmed,
         abort.current.signal,

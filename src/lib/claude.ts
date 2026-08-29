@@ -42,8 +42,27 @@ export const DEFAULT_MODEL: ModelId = 'claude-haiku-4-5'
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01'
 let fallbacksUnavailable = false
 
-function client(apiKey: string): Anthropic {
-  return new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
+/**
+ * A key created against your identity rather than a single workspace can reach
+ * several workspaces, so the API refuses to guess which one to bill and returns
+ * a 400 until `anthropic-workspace-id` is supplied. Workspace-scoped keys do not
+ * need it, hence the setting being optional.
+ */
+function client(apiKey: string, workspaceId = ''): Anthropic {
+  const id = workspaceId.trim()
+  return new Anthropic({
+    apiKey,
+    dangerouslyAllowBrowser: true,
+    ...(id ? { defaultHeaders: { 'anthropic-workspace-id': id } } : {}),
+  })
+}
+
+/** Recognises the "which workspace?" 400 so we can explain it properly. */
+export function isWorkspaceIdRequired(err: unknown): boolean {
+  return (
+    err instanceof Anthropic.BadRequestError &&
+    String(err.message).includes('anthropic-workspace-id')
+  )
 }
 
 export class MissingKeyError extends Error {
@@ -59,6 +78,7 @@ export function looksLikeKey(key: string): boolean {
 
 interface CallOptions {
   apiKey: string
+  workspaceId?: string
   model: ModelId
   system: string
   messages: Anthropic.MessageParam[]
@@ -78,7 +98,7 @@ interface CallResult {
  */
 async function call(options: CallOptions): Promise<CallResult> {
   if (!options.apiKey) throw new MissingKeyError()
-  const anthropic = client(options.apiKey)
+  const anthropic = client(options.apiKey, options.workspaceId)
 
   const shared = {
     model: options.model,
@@ -102,6 +122,9 @@ async function call(options: CallOptions): Promise<CallResult> {
   try {
     response = await send(!fallbacksUnavailable)
   } catch (err) {
+    // A missing workspace id is not a beta problem, and retrying would only
+    // produce the same 400 while wrongly disabling fallbacks for the session.
+    if (isWorkspaceIdRequired(err)) throw err
     // If this account does not have the fallback beta, stop asking for it and
     // retry once on the stable endpoint rather than killing the conversation.
     if (!fallbacksUnavailable && err instanceof Anthropic.BadRequestError) {
@@ -190,8 +213,13 @@ function toApiMessages(history: StoredMessage[]): Anthropic.MessageParam[] {
 /** Keeps the request bounded on a long conversation without losing the thread. */
 const MAX_HISTORY_TURNS = 24
 
-export interface TutorRequest {
+/** What the app needs to authenticate. Workspace id is optional. */
+export interface Credentials {
   apiKey: string
+  workspaceId?: string
+}
+
+export interface TutorRequest extends Credentials {
   model: ModelId
   theme: Theme
   history: StoredMessage[]
@@ -204,6 +232,7 @@ export async function askTutor(req: TutorRequest): Promise<TutorReply> {
   const trimmed = req.history.slice(-MAX_HISTORY_TURNS)
   const { text, refused } = await call({
     apiKey: req.apiKey,
+    workspaceId: req.workspaceId,
     model: req.model,
     system: systemPrompt(req.theme, req.corrections),
     messages: [...toApiMessages(trimmed), { role: 'user', content: req.userText }],
@@ -229,13 +258,13 @@ const GRAMMAR_SYSTEM = `You are a Swedish grammar tutor answering a complete beg
 - If the question is not about Swedish, say that you only cover Swedish.`
 
 export async function askGrammar(
-  apiKey: string,
+  creds: Credentials,
   model: ModelId,
   question: string,
   signal?: AbortSignal,
 ): Promise<string> {
   const { text, refused } = await call({
-    apiKey,
+    ...creds,
     model,
     system: GRAMMAR_SYSTEM,
     messages: [{ role: 'user', content: question }],
@@ -247,9 +276,9 @@ export async function askGrammar(
 }
 
 /** Verifies a key works, so Settings can confirm it rather than failing later. */
-export async function testKey(apiKey: string, model: ModelId): Promise<void> {
+export async function testKey(creds: Credentials, model: ModelId): Promise<void> {
   await call({
-    apiKey,
+    ...creds,
     model,
     system: 'Reply with the single word: ok',
     messages: [{ role: 'user', content: 'ping' }],
@@ -260,6 +289,8 @@ export async function testKey(apiKey: string, model: ModelId): Promise<void> {
 /** Turns SDK errors into something worth showing a user. */
 export function describeApiError(err: unknown): string {
   if (err instanceof MissingKeyError) return err.message
+  if (isWorkspaceIdRequired(err))
+    return 'This key belongs to your account rather than to one workspace, so Anthropic needs to know which workspace to bill. Either paste a Workspace ID below, or create a new key from inside a workspace in the Console.'
   if (err instanceof Anthropic.AuthenticationError)
     return 'That API key was rejected. Check it in Settings.'
   if (err instanceof Anthropic.PermissionDeniedError)

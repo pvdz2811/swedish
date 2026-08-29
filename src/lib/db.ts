@@ -33,6 +33,12 @@ export interface Session {
 export interface Settings {
   /** Anthropic API key. Stored on this device only — never transmitted anywhere but api.anthropic.com. */
   apiKey: string
+  /**
+   * Only needed for account-wide ("identity-linked") keys, which can reach more
+   * than one workspace and so must say which one to bill. Blank for keys that
+   * were created inside a single workspace.
+   */
+  workspaceId: string
   /** Voice URI of the preferred Swedish TTS voice, or '' for the browser default. */
   voiceURI: string
   /** Playback rate for spoken Swedish. Beginners usually want this below 1. */
@@ -51,6 +57,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   apiKey: '',
+  workspaceId: '',
   voiceURI: '',
   speechRate: 0.85,
   autoSpeak: true,

@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useSettings } from '../lib/useSettings'
-import { MODELS, describeApiError, looksLikeKey, testKey, type ModelId } from '../lib/claude'
+import {
+  MODELS,
+  describeApiError,
+  isWorkspaceIdRequired,
+  looksLikeKey,
+  testKey,
+  type ModelId,
+} from '../lib/claude'
 import {
   loadVoices,
   speak,
@@ -20,6 +27,8 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [confirmWipe, setConfirmWipe] = useState(false)
+  // Shown on demand, or automatically once the API says it is required.
+  const [showWorkspace, setShowWorkspace] = useState(Boolean(settings.workspaceId))
 
   useEffect(() => {
     void loadVoices().then((all) => setVoices(swedishVoices(all)))
@@ -29,10 +38,16 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
     setTesting(true)
     setTestResult(null)
     try {
-      await testKey(settings.apiKey, settings.model)
+      await testKey(
+        { apiKey: settings.apiKey, workspaceId: settings.workspaceId },
+        settings.model,
+      )
       setTestResult({ ok: true, message: 'Key works. The conversation partner is ready.' })
     } catch (err) {
       setTestResult({ ok: false, message: describeApiError(err) })
+      // Surface the workspace field only once it turns out to be needed, so the
+      // common case stays a single box to fill in.
+      if (isWorkspaceIdRequired(err)) setShowWorkspace(true)
     } finally {
       setTesting(false)
     }
@@ -112,6 +127,47 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
             >
               {testResult.message}
             </div>
+          )}
+
+          {showWorkspace ? (
+            <div className="field">
+              <label htmlFor="ws">Workspace ID</label>
+              <input
+                id="ws"
+                type="text"
+                value={settings.workspaceId}
+                placeholder="wrkspc_…"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                onChange={(e) => {
+                  update({ workspaceId: e.target.value.trim() })
+                  setTestResult(null)
+                }}
+              />
+              <div className="hint">
+                Only needed for a key made against your account rather than one workspace. Find it
+                in the Console under{' '}
+                <a
+                  className="link"
+                  href="https://console.anthropic.com/settings/workspaces"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Settings → Workspaces
+                </a>
+                : open a workspace and copy the <code>wrkspc_…</code> id from the address bar.
+                Leave blank if your key already belongs to a single workspace.
+              </div>
+            </div>
+          ) : (
+            <button
+              className="link"
+              style={{ marginTop: 12, fontSize: 13 }}
+              onClick={() => setShowWorkspace(true)}
+            >
+              Add a Workspace ID
+            </button>
           )}
 
           <div className="field">

@@ -179,6 +179,7 @@ function Conversation({ theme, onLeave }: { theme: Theme; onLeave: () => void })
       try {
         const reply = await askTutor({
           apiKey: settings.apiKey,
+          workspaceId: settings.workspaceId,
           model: settings.model,
           theme,
           history,
