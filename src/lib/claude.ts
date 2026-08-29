@@ -196,10 +196,14 @@ EN: <a plain English translation of your Swedish reply>
 FIX: <feedback on the learner's Swedish, or a single hyphen>
 
 THE FIX LINE
-- If the learner's last message had a mistake worth correcting, give the corrected Swedish followed by a very short reason in English. Example: FIX: "Jag är hungrig" - "jag" needs the verb "är" here.
-- Correct at most one thing per turn, and always the most important one. Ignore typos and missing capitals.
-- If the learner wrote good Swedish, or wrote in English, or this is the opening turn, write exactly: FIX: -
-- Never put the correction in the SV line. It belongs only on the FIX line.`
+Judge the learner's last message as a native speaker would. If a Swede would not say it that way, correct it. All of these count as mistakes: wrong or missing verb, wrong word order, missing word, wrong en/ett, wrong verb form, wrong preposition. Only genuine typing slips and missing capital letters are ignored.
+
+- Write the full corrected sentence, then a dash, then a very short reason in English.
+  Example: FIX: Jag vill ha en kaffe - "vill" needs "ha" after it to mean "want".
+  Example: FIX: Idag äter jag fisk - the verb must come second, so "jag" moves behind it.
+- Correct only the single most important thing, even when there are several.
+- Write exactly "FIX: -" only in these cases: the Swedish was already correct, the learner wrote in English, or this is the opening turn. Do not write "FIX: -" merely because the mistake was small.
+- Never put the correction in the SV line. Reply naturally there and keep the correction on the FIX line.`
 
 function systemPrompt(theme: Theme, corrections: boolean): string {
   const parts = [TUTOR_RULES, `\nSCENARIO\n${theme.setting}`]
