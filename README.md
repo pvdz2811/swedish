@@ -23,35 +23,37 @@ npm run dev
 Open <http://localhost:5173>. The microphone and speech synthesis both work on
 `localhost` without HTTPS.
 
-## Putting it on your phone
+## Live site
 
-The app has to be served over HTTPS — Android Chrome blocks the microphone and
-service workers on plain `http`, so serving from your PC over WiFi will not work.
+**<https://pvdz2811.github.io/swedish/>**
 
-1. Create an **empty** repository on GitHub (public or private both work).
-2. Point this project at it and push:
+Deployed from the `gh-pages` branch of this repo. To ship an update:
 
-   ```bash
-   git remote add origin https://github.com/<you>/<repo>.git
-   git push -u origin main
-   ```
+```bash
+npm run deploy
+```
 
-3. Deploy:
+That builds with the correct base path (`/swedish/`), pushes `dist/` to
+`gh-pages`, and the site refreshes within a minute or two. Nothing else to do —
+Pages is already configured.
 
-   ```bash
-   npm run deploy
-   ```
+The app must be served over HTTPS: Android Chrome blocks the microphone and
+service workers on plain `http`, so serving from a PC over WiFi will not work.
 
-   This builds with the right base path, pushes `dist/` to a `gh-pages` branch
-   and prints your URL.
+> The repository is public because GitHub Pages does not serve private repos on
+> a free account. That is safe here — the API key is entered at runtime and
+> stored in the browser, never committed. Note that a Pages site is publicly
+> reachable on *every* plan, so a private repo would not have made the app
+> private either.
 
-4. **One time only**, in the repo's Settings → Pages, set Source to
-   "Deploy from a branch", branch `gh-pages`, folder `/ (root)`.
+### Installing on the phone
 
-5. On the S25, open the URL in Chrome → menu → **Add to Home screen**. It then
-   launches fullscreen with its own icon.
-
-Each later update is just `npm run deploy`.
+1. Open the URL in Chrome → menu → **Add to Home screen**. It then launches
+   fullscreen with its own icon.
+2. Settings → Accessibility → Text-to-speech output → **install Swedish**,
+   otherwise replies are read with the wrong accent.
+3. Open the app, paste your API key in Settings, and allow the microphone the
+   first time you tap the mic.
 
 ### On the phone, one time
 
