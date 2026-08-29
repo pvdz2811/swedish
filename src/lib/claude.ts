@@ -18,21 +18,41 @@ export const MODELS = [
     id: 'claude-haiku-4-5',
     label: 'Haiku 4.5 — goes furthest',
     hint: 'Fastest, and about 2,500 exchanges per $5. Simpler Swedish and blunter corrections, which is fine at beginner level.',
+    // Haiku 4.5 predates the effort parameter and rejects it with a 400.
+    supportsEffort: false,
   },
   {
     id: 'claude-sonnet-5',
     label: 'Sonnet 5 — balanced',
     hint: 'Noticeably more natural Swedish. About 1,300 exchanges per $5.',
+    supportsEffort: true,
   },
   {
     id: 'claude-opus-5',
     label: 'Opus 5 — best Swedish',
     hint: 'The most natural replies and the sharpest corrections. About 500 exchanges per $5.',
+    supportsEffort: true,
   },
 ] as const
 
 export type ModelId = (typeof MODELS)[number]['id']
 export const DEFAULT_MODEL: ModelId = 'claude-haiku-4-5'
+
+/**
+ * Not every model accepts `output_config.effort`. The table above is the source
+ * of truth, but a model added later could still surprise us, so `call` also
+ * learns from a 400 at runtime and records it here.
+ */
+const effortRejected = new Set<string>()
+
+function useEffortFor(model: ModelId): boolean {
+  const entry = MODELS.find((m) => m.id === model)
+  return Boolean(entry?.supportsEffort) && !effortRejected.has(model)
+}
+
+function isEffortUnsupported(err: unknown): boolean {
+  return err instanceof Anthropic.BadRequestError && /effort/i.test(String(err.message))
+}
 
 /**
  * Server-side refusal fallback. A Swedish tutor will essentially never trip a
@@ -92,48 +112,62 @@ interface CallResult {
 }
 
 /**
- * One request, with the refusal fallback when it is available.
- * Effort is pinned low: these are short conversational turns, and latency is
- * felt directly because the reply gets spoken aloud.
+ * One request, degrading gracefully on the two optional extras it asks for.
+ *
+ * Both `output_config.effort` and the refusal-fallback beta are nice to have
+ * rather than essential — effort keeps latency down on a reply that is about to
+ * be read aloud — so a 400 caused by either is retried without it instead of
+ * being surfaced to a learner who cannot act on it. Each is disabled for the
+ * rest of the session once rejected, so the cost is one wasted request.
  */
 async function call(options: CallOptions): Promise<CallResult> {
   if (!options.apiKey) throw new MissingKeyError()
   const anthropic = client(options.apiKey, options.workspaceId)
 
-  const shared = {
-    model: options.model,
-    max_tokens: options.maxTokens,
-    system: options.system,
-    messages: options.messages,
-    output_config: { effort: 'low' as const },
-  }
-
-  const send = async (withFallbacks: boolean) => {
+  const send = async (withFallbacks: boolean, withEffort: boolean) => {
+    const params = {
+      model: options.model,
+      max_tokens: options.maxTokens,
+      system: options.system,
+      messages: options.messages,
+      ...(withEffort ? { output_config: { effort: 'low' as const } } : {}),
+    }
     if (withFallbacks) {
       return anthropic.beta.messages.create(
-        { ...shared, betas: [FALLBACK_BETA], fallbacks: 'default' },
+        { ...params, betas: [FALLBACK_BETA], fallbacks: 'default' },
         { signal: options.signal },
       )
     }
-    return anthropic.messages.create(shared, { signal: options.signal })
+    return anthropic.messages.create(params, { signal: options.signal })
   }
 
-  let response: Awaited<ReturnType<typeof send>>
-  try {
-    response = await send(!fallbacksUnavailable)
-  } catch (err) {
-    // A missing workspace id is not a beta problem, and retrying would only
-    // produce the same 400 while wrongly disabling fallbacks for the session.
-    if (isWorkspaceIdRequired(err)) throw err
-    // If this account does not have the fallback beta, stop asking for it and
-    // retry once on the stable endpoint rather than killing the conversation.
-    if (!fallbacksUnavailable && err instanceof Anthropic.BadRequestError) {
-      fallbacksUnavailable = true
-      response = await send(false)
-    } else {
+  let withFallbacks = !fallbacksUnavailable
+  let withEffort = useEffortFor(options.model)
+
+  let response: Awaited<ReturnType<typeof send>> | undefined
+  // At most two retries: one per optional extra.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await send(withFallbacks, withEffort)
+      break
+    } catch (err) {
+      // A missing workspace id is the user's to fix; retrying just repeats it.
+      if (isWorkspaceIdRequired(err)) throw err
+
+      if (withEffort && isEffortUnsupported(err)) {
+        effortRejected.add(options.model)
+        withEffort = false
+        continue
+      }
+      if (withFallbacks && err instanceof Anthropic.BadRequestError) {
+        fallbacksUnavailable = true
+        withFallbacks = false
+        continue
+      }
       throw err
     }
   }
+  if (!response) throw new Error('The request failed after retrying. Try again.')
 
   const text = response.content
     .map((block) => (block.type === 'text' ? block.text : ''))
