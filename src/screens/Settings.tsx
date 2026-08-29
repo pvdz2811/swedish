@@ -282,9 +282,13 @@ export default function SettingsScreen({ onBack }: { onBack: () => void }) {
               try {
                 const result = await diagnoseSpeech(settings.speechRate, settings.voiceURI)
                 setReport(result)
-                // Adopt whatever this device actually accepts.
                 if (result.winner && result.winner !== settings.speechStrategy) {
+                  // Adopt whatever this device actually accepts.
                   update({ speechStrategy: result.winner })
+                } else if (!anythingSpoke(result)) {
+                  // Synthesis is dead here. Stop trying on every reply, which
+                  // would otherwise put an error under each one.
+                  update({ autoSpeak: false })
                 }
               } finally {
                 setDiagnosing(false)
@@ -434,9 +438,7 @@ function SpeechDiagnostics({ report }: { report: SpeechReport }) {
           ? 'Found a method that works — the app has switched to it. Try Play a sample above.'
           : anythingSpoke(report)
             ? 'The engine works, but not for Swedish. Copy the details below and send them to me.'
-            : report.standalone
-              ? 'Nothing spoke at all, not even plain English. Since this is running as an installed app, try the same page in a normal Chrome tab — if it speaks there, the installed-app mode is the culprit and I can work around it.'
-              : 'Nothing spoke at all, not even plain English. Check the media volume and that the phone is not in silent mode, then copy the details below and send them to me.'}
+            : 'Nothing spoke at all, not even plain English, so this is your phone\'s text-to-speech engine refusing the browser rather than anything in the app. Spoken replies have been switched off so they stop erroring under every message — everything else still works, and you can turn them back on here once the engine is fixed.'}
       </div>
 
       <pre
