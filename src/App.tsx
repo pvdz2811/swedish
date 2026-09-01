@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Home from './screens/Home'
 import Cards from './screens/Cards'
 import Grammar from './screens/Grammar'
+import Culture from './screens/Culture'
 import Talk from './screens/Talk'
 import SettingsScreen from './screens/Settings'
 import { allCards, ensureCards } from './lib/db'
@@ -9,12 +10,13 @@ import { dueCount } from './lib/queue'
 import { loadVoices, primeSpeechOnFirstGesture } from './lib/speech'
 import { useSettings } from './lib/useSettings'
 
-export type Tab = 'home' | 'cards' | 'grammar' | 'talk' | 'settings'
+export type Tab = 'home' | 'cards' | 'grammar' | 'culture' | 'talk' | 'settings'
 
 const TABS: { id: Tab; label: string; glyph: string }[] = [
   { id: 'home', label: 'Home', glyph: '🏠' },
   { id: 'cards', label: 'Cards', glyph: '🃏' },
   { id: 'grammar', label: 'Grammar', glyph: '📖' },
+  { id: 'culture', label: 'Culture', glyph: '🏛️' },
   { id: 'talk', label: 'Talk', glyph: '🎙️' },
 ]
 
@@ -66,6 +68,7 @@ export default function App() {
       {tab === 'home' && <Home go={setTab} dueCount={due} />}
       {tab === 'cards' && <Cards onReviewed={refreshDue} />}
       {tab === 'grammar' && <Grammar />}
+      {tab === 'culture' && <Culture />}
       {tab === 'talk' && <Talk />}
       {tab === 'settings' && <SettingsScreen onBack={() => setTab('home')} />}
 

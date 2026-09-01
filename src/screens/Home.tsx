@@ -3,6 +3,7 @@ import type { Tab } from '../App'
 import { allCards, allLessonProgress, loadDailyLog, streakFrom, todayKey } from '../lib/db'
 import { deckStats, type DeckStats } from '../lib/srs'
 import { LESSONS } from '../data/grammar'
+import { GEOGRAPHY, HISTORY } from '../data/culture'
 import { useSettings } from '../lib/useSettings'
 
 function greeting(hour: number): string {
@@ -121,6 +122,21 @@ export default function Home({ go, dueCount }: { go: (t: Tab) => void; dueCount:
             <strong>Grammar</strong>
             <span className="muted">
               {LESSONS.length} lessons, each with a short quiz
+            </span>
+          </span>
+          <span className="chev" aria-hidden="true">
+            ›
+          </span>
+        </button>
+
+        <button className="nav-card" onClick={() => go('culture')}>
+          <span className="glyph" aria-hidden="true">
+            🏛️
+          </span>
+          <span className="body">
+            <strong>Culture</strong>
+            <span className="muted">
+              {GEOGRAPHY.length} places and {HISTORY.length} eras, each with a quiz
             </span>
           </span>
           <span className="chev" aria-hidden="true">
